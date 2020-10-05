@@ -1,3 +1,6 @@
+#include <MHZ.h>
+#include <SoftwareSerial.h>
+
 /*********************************************************************
  This is an example for our nRF52 based Bluefruit LE modules
 
@@ -13,22 +16,29 @@
 *********************************************************************/
 #include <bluefruit.h>
 
+// todo: change the Softserial to I2C interface to communicate with multiple sensors
+
+// digital pin of adafruit feather nrf52832. As a softwareSerial interface to communicate with Sensor
+#define SoftSerialRX (15) 
+#define SoftSerialTX (16)  
 /* Environment sensor Service Definitions
  * Environment sensor Service:  0x181A
  * Environment Measurement Char: 0x2AFF (Including CO2, O2, humidity, temperature, etc.) Notification
  * Environment Sensor Setting Char:
  */
-BLEService        hrms = BLEService(UUID16_SVC_ENVIRONMENTAL_SENSING);
-BLECharacteristic hrmc = BLECharacteristic(UUID16_CHR_ENVIRONMENTAL_SENSING);
-BLECharacteristic bslc = BLECharacteristic(UUID16_CHR_ENVIRONMENTAL_SENSING_SETTING);
+BLEService        envs = BLEService(UUID16_SVC_ENVIRONMENTAL_SENSING);
+BLECharacteristic envsc = BLECharacteristic(UUID16_CHR_ENVIRONMENTAL_SENSING);
+BLECharacteristic envssetupc = BLECharacteristic(UUID16_CHR_ENVIRONMENTAL_SENSING_SETTING);
 
 BLEDis bledis;    // DIS (Device Information Service) helper class instance
 BLEBas blebas;    // BAS (Battery Service) helper class instance
 
+MHZ co2(SoftSerialRX, SoftSerialTX, MHZ14A);
+
 uint8_t  bps = 0;
 
 void setup()
-{
+{ 
   Serial.begin(115200);
   while ( !Serial ) delay(10);   // for nrf52840 with native usb
 
@@ -40,8 +50,8 @@ void setup()
   Bluefruit.begin();
 
   // Set the advertised device name (keep it short!)
-  Serial.println("Setting Device Name to 'Feather52 HRM'");
-  Bluefruit.setName("Bluefruit52 HRM");
+  Serial.println("Setting Device Name to 'Feather52 ENVS'");
+  Bluefruit.setName("Bluefruit52 ENVS");
 
   // Set the connect/disconnect callback handlers
   Bluefruit.Periph.setConnectCallback(connect_callback);
@@ -60,8 +70,8 @@ void setup()
 
   // Setup the Heart Rate Monitor service using
   // BLEService and BLECharacteristic classes
-  Serial.println("Configuring the Heart Rate Monitor Service");
-  setupHRM();
+  Serial.println("Configuring the environment monitor Service");
+  setupENVS();
 
   // Setup the advertising packet(s)
   Serial.println("Setting up the advertising payload(s)");
@@ -69,6 +79,16 @@ void setup()
 
   Serial.println("Ready Player One!!!");
   Serial.println("\nAdvertising");
+
+  // initialization of CO2 sensor(MHZ14A)
+  if (co2.isPreHeating()) {
+    Serial.print("Preheating");
+    while (co2.isPreHeating()) {
+      Serial.print(".");
+      delay(5000);
+    }
+    Serial.println();
+  }
 }
 
 void startAdv(void)
@@ -78,7 +98,7 @@ void startAdv(void)
   Bluefruit.Advertising.addTxPower();
 
   // Include HRM Service UUID
-  Bluefruit.Advertising.addService(hrms);
+  Bluefruit.Advertising.addService(envs);
 
   // Include Name
   Bluefruit.Advertising.addName();
@@ -98,7 +118,7 @@ void startAdv(void)
   Bluefruit.Advertising.start(0);                // 0 = Don't stop advertising after n seconds  
 }
 
-void setupHRM(void)
+void setupENVS(void)
 {
   // Configure the Heart Rate Monitor service
   // See: https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.service.heart_rate.xml
@@ -108,7 +128,7 @@ void setupHRM(void)
   // Heart Rate Measurement       0x2A37  Mandatory   Notify
   // Body Sensor Location         0x2A38  Optional    Read
   // Heart Rate Control Point     0x2A39  Conditional Write       <-- Not used here
-  hrms.begin();
+  envs.begin();
 
   // Note: You must call .begin() on the BLEService before calling .begin() on
   // any characteristic(s) within that service definition.. Calling .begin() on
@@ -130,13 +150,13 @@ void setupHRM(void)
   //    B2:3    = UINT16 - 16-bit heart rate measurement value in BPM
   //    B4:5    = UINT16 - Energy expended in joules
   //    B6:7    = UINT16 - RR Internal (1/1024 second resolution)
-  hrmc.setProperties(CHR_PROPS_NOTIFY);
-  hrmc.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
-  hrmc.setFixedLen(2);
-  hrmc.setCccdWriteCallback(cccd_callback);  // Optionally capture CCCD updates
-  hrmc.begin();
+  envsc.setProperties(CHR_PROPS_NOTIFY);
+  envsc.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  envsc.setFixedLen(2);
+  envsc.setCccdWriteCallback(cccd_callback);  // Optionally capture CCCD updates
+  envsc.begin();
   uint8_t hrmdata[2] = { 0b00000110, 0x40 }; // Set the characteristic to use 8-bit values, with the sensor connected and detected
-  hrmc.write(hrmdata, 2);
+  envsc.write(hrmdata, 2);
 
   // Configure the Body Sensor Location characteristic
   // See: https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.characteristic.body_sensor_location.xml
@@ -152,11 +172,11 @@ void setupHRM(void)
   //      5     = Ear Lobe
   //      6     = Foot
   //      7:255 = Reserved
-  bslc.setProperties(CHR_PROPS_READ);
-  bslc.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
-  bslc.setFixedLen(1);
-  bslc.begin();
-  bslc.write8(2);    // Set the characteristic to 'Wrist' (2)
+  envssetupc.setProperties(CHR_PROPS_WRITE);
+  envssetupc.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  envssetupc.setFixedLen(1);
+  envssetupc.begin();
+  envssetupc.write8(2);    // Set the characteristic to 'Wrist' (2)
 }
 
 void connect_callback(uint16_t conn_handle)
@@ -195,11 +215,11 @@ void cccd_callback(uint16_t conn_hdl, BLECharacteristic* chr, uint16_t cccd_valu
 
     // Check the characteristic this CCCD update is associated with in case
     // this handler is used for multiple CCCD records.
-    if (chr->uuid == hrmc.uuid) {
+    if (chr->uuid == envsc.uuid) {
         if (chr->notifyEnabled(conn_hdl)) {
-            Serial.println("Heart Rate Measurement 'Notify' enabled");
+            Serial.println("Environment Measurement 'Notify' enabled");
         } else {
-            Serial.println("Heart Rate Measurement 'Notify' disabled");
+            Serial.println("Environment Measurement 'Notify' disabled");
         }
     }
 }
@@ -207,17 +227,25 @@ void cccd_callback(uint16_t conn_hdl, BLECharacteristic* chr, uint16_t cccd_valu
 void loop()
 {
   digitalToggle(LED_RED);
-  
+  uint8_t hrmdata[2]={0};
   if ( Bluefruit.connected() ) {
-    uint8_t hrmdata[2] = { 0b00000110, bps++ };           // Sensor connected, increment BPS value
+    int ppm_uart = co2.readCO2UART();
+
+    if (ppm_uart > 0) {
+      hrmdata[0] = (ppm_uart >> 8) & 0xff;
+      hrmdata[1] = ppm_uart & 0xff;
     
-    // Note: We use .notify instead of .write!
-    // If it is connected but CCCD is not enabled
-    // The characteristic's value is still updated although notification is not sent
-    if ( hrmc.notify(hrmdata, sizeof(hrmdata)) ){
-      Serial.print("Heart Rate Measurement updated to: "); Serial.println(bps); 
-    }else{
-      Serial.println("ERROR: Notify not set in the CCCD or not connected!");
+      // Note: We use .notify instead of .write!
+      // If it is connected but CCCD is not enabled
+      // The characteristic's value is still updated although notification is not sent
+      if ( envsc.notify(hrmdata, sizeof(hrmdata)) ){
+        Serial.print("CO2 concentration Measurement updated to: "); 
+        Serial.println(hrmdata[0]);
+        Serial.println(hrmdata[1]); 
+        Serial.println(ppm_uart);
+      }else{
+        Serial.println("ERROR: Notify not set in the CCCD or not connected!");
+      }
     }
   }
 
