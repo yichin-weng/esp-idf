@@ -604,7 +604,7 @@ static esp_err_t ble_mesh_init(void)
         return err;
     }
 
-    board_led_operation(LED_G, LED_ON);
+    board_led_operation(LED_G, LED_ON); // this part is not needed
 
     ESP_LOGI(TAG, "BLE Mesh sensor server initialized");
 
