@@ -22,6 +22,10 @@
 #include "ble_mesh_example_init.h"
 #include "board.h"
 
+#ifndef ESP_BLE_MESH_CID_NVAL
+#define ESP_BLE_MESH_CID_NVAL 0xFFFF
+#endif
+
 #define TAG "EXAMPLE"
 
 #define CID_ESP             0x02E5
@@ -41,8 +45,10 @@
 #define COMP_DATA_1_OCTET(msg, offset)      (msg[offset])
 #define COMP_DATA_2_OCTET(msg, offset)      (msg[offset + 1] << 8 | msg[offset])
 
+static uint8_t  nums_of_dev = 0;
+static uint8_t  current_dev_idx = 0;
 static uint8_t  dev_uuid[ESP_BLE_MESH_OCTET16_LEN];
-static uint16_t server_address = ESP_BLE_MESH_ADDR_UNASSIGNED;
+static uint16_t server_address[ESP_BLE_MESH_OCTET16_LEN] = {0xFFFF};
 static uint16_t sensor_prop_id;
 
 static struct esp_ble_mesh_key {
@@ -117,7 +123,9 @@ static esp_err_t prov_complete(uint16_t node_index, const esp_ble_mesh_octet16_t
         node_index, primary_addr, element_num, net_idx);
     ESP_LOG_BUFFER_HEX("uuid", uuid, ESP_BLE_MESH_OCTET16_LEN);
 
-    server_address = primary_addr;
+    server_address[nums_of_dev] = primary_addr;
+    ESP_LOGE(TAG, "current node address 0x%04x , idx 0x%04x", primary_addr, nums_of_dev);
+    nums_of_dev += 1;
 
     sprintf(name, "%s%02x", "NODE-", node_index);
     err = esp_ble_mesh_provisioner_set_node_name(node_index, name);
@@ -205,6 +213,8 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
         prov_complete(param->provisioner_prov_complete.node_idx, param->provisioner_prov_complete.device_uuid,
                       param->provisioner_prov_complete.unicast_addr, param->provisioner_prov_complete.element_num,
                       param->provisioner_prov_complete.netkey_idx);
+        uint16_t node_counts = esp_ble_mesh_provisioner_get_prov_node_count();
+        ESP_LOGI(TAG, "provisioned node numbers %d", node_counts);
         break;
     case ESP_BLE_MESH_PROVISIONER_ADD_UNPROV_DEV_COMP_EVT:
         ESP_LOGI(TAG, "ESP_BLE_MESH_PROVISIONER_ADD_UNPROV_DEV_COMP_EVT, err_code %d", param->provisioner_add_unprov_dev_comp.err_code);
@@ -280,6 +290,10 @@ static void example_ble_mesh_parse_node_comp_data(const uint8_t *data, uint16_t 
     }
     ESP_LOGI(TAG, "*********************** Composition Data End ***********************");
 }
+
+/*
+ * this api is used to control the connection parameter and something others.
+ */
 
 static void example_ble_mesh_config_client_cb(esp_ble_mesh_cfg_client_cb_event_t event,
                                               esp_ble_mesh_cfg_client_cb_param_t *param)
@@ -419,10 +433,14 @@ void example_ble_mesh_send_sensor_message(uint32_t opcode)
     esp_ble_mesh_client_common_param_t common = {0};
     esp_ble_mesh_node_t *node = NULL;
     esp_err_t err = ESP_OK;
-
-    node = esp_ble_mesh_provisioner_get_node_with_addr(server_address);
+    if (current_dev_idx >= nums_of_dev - 1)
+        current_dev_idx = 0;
+    else
+        current_dev_idx +=1;
+    node = esp_ble_mesh_provisioner_get_node_with_addr(server_address[current_dev_idx]);
+    ESP_LOGI(TAG, "choose node : 0x%04x, idx : 0x%04x", server_address[current_dev_idx], current_dev_idx);  // need to set server address to array
     if (node == NULL) {
-        ESP_LOGE(TAG, "Node 0x%04x not exists", server_address);
+        ESP_LOGE(TAG, "Node 0x%04x not exists", server_address[current_dev_idx-1]);
         return;
     }
 
@@ -507,7 +525,7 @@ static void example_ble_mesh_sensor_client_cb(esp_ble_mesh_sensor_client_cb_even
     case ESP_BLE_MESH_SENSOR_CLIENT_GET_STATE_EVT:
         switch (param->params->opcode) {
         case ESP_BLE_MESH_MODEL_OP_SENSOR_DESCRIPTOR_GET:
-            ESP_LOGI(TAG, "Sensor Descriptor Status, opcode 0x%04x", param->params->ctx.recv_op);
+            ESP_LOGI(TAG, "Sensor Descriptor Status, opcode 0x%04x, Node 0x%04x", param->params->ctx.recv_op, param->params->ctx.addr);
             if (param->status_cb.descriptor_status.descriptor->len != ESP_BLE_MESH_SENSOR_SETTING_PROPERTY_ID_LEN &&
                 param->status_cb.descriptor_status.descriptor->len % ESP_BLE_MESH_SENSOR_DESCRIPTOR_LEN) {
                 ESP_LOGE(TAG, "Invalid Sensor Descriptor Status length %d", param->status_cb.descriptor_status.descriptor->len);
@@ -614,6 +632,7 @@ static void example_ble_mesh_sensor_client_cb(esp_ble_mesh_sensor_client_cb_even
     case ESP_BLE_MESH_SENSOR_CLIENT_PUBLISH_EVT:
         break;
     case ESP_BLE_MESH_SENSOR_CLIENT_TIMEOUT_EVT:
+        ESP_LOGI(TAG, "ESP timeout event");
         example_ble_mesh_sensor_timeout(param->params->opcode);
     default:
         break;
@@ -630,7 +649,14 @@ static esp_err_t ble_mesh_init(void)
     memset(prov_key.app_key, APP_KEY_OCTET, sizeof(prov_key.app_key));
 
     esp_ble_mesh_register_prov_callback(example_ble_mesh_provisioning_cb);
+
+    /*
+     * set connection interval and data frequency ane etc.
+     */
     esp_ble_mesh_register_config_client_callback(example_ble_mesh_config_client_cb);
+    /*
+     * deal with data from sensor server.
+     */
     esp_ble_mesh_register_sensor_client_callback(example_ble_mesh_sensor_client_cb);
 
     err = esp_ble_mesh_init(&provision, &composition);
