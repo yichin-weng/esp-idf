@@ -6,6 +6,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+ /*
+  In order to use BME280
+  */
+
 #include <stdio.h>
 #include <string.h>
 
