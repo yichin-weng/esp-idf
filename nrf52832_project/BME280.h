@@ -1,10 +1,14 @@
-#ifndef _BME280_H
-#define _BME280_H
+#ifndef BME280_H
+#define BME280_H
 
-/*
- in order to use I2C protocol to control multiple sensor
- BME280 : http://trac.switch-science.com/wiki/BME280
- */
-unsigned long int hum_raw, temp_raw, pres_raw;
+class BME280 {
+    public:
+        BME280(){
+            ; //
+        }
+        void ;
+    private:
+        bool ;
+}
 
 #endif
