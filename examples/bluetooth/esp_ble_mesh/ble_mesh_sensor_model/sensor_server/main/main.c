@@ -7,6 +7,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/*
+ * it is nesessary to call i2c_master_start before using i2c protocol
+ */
+
 #include <stdio.h>
 #include <string.h>
 
@@ -22,14 +26,35 @@
 
 #include "ble_mesh_example_init.h"
 #include "board.h"
+#include "driver/i2c.h"
 
 #define TAG "EXAMPLE"
 
 #define CID_ESP     0x02E5
 
+/*
+ Macro for I2C setting:
+ */
+
+static i2c_cmd_handle_t cmd_handle;
+
+#define BME280_ADDR                 0x76
+
+#define I2C_MASTER_TX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_RX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
+#define WRITE_BIT I2C_MASTER_WRITE  /*!< I2C master write */
+#define READ_BIT I2C_MASTER_READ    /*!< I2C master read */
+#define ACK_CHECK_EN 0x1            /*!< I2C master will check ack from slave*/
+#define ACK_CHECK_DIS 0x0           /*!< I2C master will not check ack from slave */
+#define ACK_VAL 0x0                 /*!< I2C ack value */
+#define NACK_VAL 0x1                /*!< I2C nack value */
+
 /* Sensor Property ID */
 #define SENSOR_PROPERTY_ID_0        0x0056  /* Present Indoor Ambient Temperature */
 #define SENSOR_PROPERTY_ID_1        0x005B  /* Present Outdoor Ambient Temperature */
+#define SENSOR_PROPERTY_ID_2        0x0060  /* Present Indoor CO2 concentration */
+#define SENSOR_PROPERTY_ID_3        0x0061  /* Present Indoor O2 concentration */
+#define SENSOR_PROPERTY_ID_4        0x0062  /* Present Inddor humidity */
 
 /* The characteristic of the two device properties is "Temperature 8", which is
  * used to represent a measure of temperature with a unit of 0.5 degree Celsius.
@@ -47,6 +72,9 @@ static int8_t outdoor_temp = 60;    /* Outdoor temperature is 30 Degrees Celsius
 
 static uint8_t dev_uuid[ESP_BLE_MESH_OCTET16_LEN] = { 0x32, 0x10 };
 
+/*
+ * By doing the idf.py menuconfig, we enable the Macro
+ */
 static esp_ble_mesh_cfg_srv_t config_server = {
     .relay = ESP_BLE_MESH_RELAY_ENABLED,
     .beacon = ESP_BLE_MESH_BEACON_ENABLED,
@@ -68,6 +96,7 @@ static esp_ble_mesh_cfg_srv_t config_server = {
 
 NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_0, 1);
 NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_1, 1);
+NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_2, 8);
 
 static esp_ble_mesh_sensor_state_t sensor_states[2] = {
     /* Mesh Model Spec:
@@ -108,6 +137,17 @@ static esp_ble_mesh_sensor_state_t sensor_states[2] = {
         .sensor_data.length = 0, /* 0 represents the length is 1 */
         .sensor_data.raw_value = &sensor_data_1,
     },
+    [2] = {
+        .sensor_property_id = SENSOR_PROPERTY_ID_2,
+        .descriptor.positive_tolerance = SENSOR_POSITIVE_TOLERANCE,
+        .descriptor.negative_tolerance = SENSOR_NEGATIVE_TOLERANCE,
+        .descriptor.sampling_function = SENSOR_SAMPLE_FUNCTION,
+        .descriptor.measure_period = SENSOR_MEASURE_PERIOD,
+        .descriptor.update_interval = SENSOR_UPDATE_INTERVAL,
+        .sensor_data.format = ESP_BLE_MESH_SENSOR_DATA_FORMAT_A,
+        .sensor_data.length = 8, /* 0 represents the length is 1 */
+        .sensor_data.raw_value = &sensor_data_2,
+    },
 };
 
 /* 20 octets is large enough to hold two Sensor Descriptor state values. */
@@ -133,9 +173,37 @@ static esp_ble_mesh_model_t root_models[] = {
     ESP_BLE_MESH_MODEL_SENSOR_SETUP_SRV(&sensor_setup_pub, &sensor_setup_server),
 };
 
+/*
+ * this structure describe the elements we can edit in mesh interface.
+ */
 static esp_ble_mesh_elem_t elements[] = {
     ESP_BLE_MESH_ELEMENT(0, root_models, ESP_BLE_MESH_MODEL_NONE),
 };
+
+/*
+ * initialize i2c master mode with default parameters
+ * sda_io_num = 18 (pin number)
+ * scl_io_num = 19 (pin number)
+ * i2c_frequency = 100,000hz
+ */
+
+static gpio_num_t i2c_gpio_sda = 18;
+static gpio_num_t i2c_gpio_scl = 19;
+static uint32_t i2c_frequency = 100000;
+static i2c_port_t i2c_port = I2C_NUM_0;
+
+static esp_err_t i2c_master_driver_initialize(void)
+{
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = i2c_gpio_sda,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_io_num = i2c_gpio_scl,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = i2c_frequency
+    };
+    return i2c_param_config(i2c_port, &conf);
+}
 
 static esp_ble_mesh_comp_t composition = {
     .cid = CID_ESP,
@@ -540,6 +608,7 @@ static void example_ble_mesh_sensor_server_cb(esp_ble_mesh_sensor_server_cb_even
             ESP_LOGI(TAG, "ESP_BLE_MESH_MODEL_OP_SENSOR_SETTINGS_GET");
             example_ble_mesh_send_sensor_setting_status(param);
             break;
+            /* edit this part to fit multiple sensors */
         case ESP_BLE_MESH_MODEL_OP_SENSOR_GET:
             ESP_LOGI(TAG, "ESP_BLE_MESH_MODEL_OP_SENSOR_GET");
             example_ble_mesh_send_sensor_status(param);
@@ -597,12 +666,31 @@ static esp_err_t ble_mesh_init(void)
         ESP_LOGE(TAG, "Failed to initialize mesh stack");
         return err;
     }
+    /* I2C master mode does not need any buffer */
+    err = i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to use i2c driver");
+        return err;
+    }
+
+    err = i2c_master_driver_initialize();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize I2C with these parameters");
+        return err;
+    }
 
     err = esp_ble_mesh_node_prov_enable(ESP_BLE_MESH_PROV_ADV | ESP_BLE_MESH_PROV_GATT);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to enable mesh node");
         return err;
     }
+    /* create i2c handle, and test i2c interface */
+    cmd_handle = i2c_cmd_link_create();
+    i2c_master_start(cmd_handle);
+    i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | WRITE_BIT, ACK_CHECK_EN);
+    i2c_master_stop(cmd_handle);
+    esp_err_t ret = i2c_master_cmd_begin(0, cmd, 50 / portTICK_RATE_MS) // 50ms
+    i2c_cmd_link_delete(cmd);
 
     board_led_operation(LED_G, LED_ON); // this part is not needed
 

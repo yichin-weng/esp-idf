@@ -28,6 +28,9 @@ static gpio_num_t i2c_gpio_scl = 19;
 static uint32_t i2c_frequency = 100000;
 static i2c_port_t i2c_port = I2C_NUM_0;
 
+/*
+ * get i2c port through a switch structure
+ */
 static esp_err_t i2c_get_port(int port, i2c_port_t *i2c_port)
 {
     if (port >= I2C_NUM_MAX) {
