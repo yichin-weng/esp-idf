@@ -8,7 +8,15 @@
  */
 
 /*
- * it is nesessary to call i2c_master_start before using i2c protocol
+ * I2C protocol api procedure.
+ *  Procedure:
+ *      i2c_driver_install() -> i2c_cmd_link_create() -> i2c_master_start() -> i2c_master_write()
+ * -> i2c_master_cmd_begin() ->i2c_cmd_link_delete()
+ *
+ * i2c_driver_install : ensure/enable the i2c interface is useful for esp32.
+ *
+ *
+ * (Optional: if there is any problem with i2c, check i2c_driver_install FLAG:ESP_INTR_FLAG_IRAM)
  */
 
 #include <stdio.h>
@@ -31,14 +39,11 @@
 #define TAG "EXAMPLE"
 
 #define CID_ESP     0x02E5
+#define BME280_ADDR 0x76
 
 /*
  Macro for I2C setting:
  */
-
-static i2c_cmd_handle_t cmd_handle;
-
-#define BME280_ADDR                 0x76
 
 #define I2C_MASTER_TX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
 #define I2C_MASTER_RX_BUF_DISABLE 0 /*!< I2C master doesn't need buffer */
@@ -98,7 +103,7 @@ NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_0, 1);
 NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_1, 1);
 NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_2, 8);
 
-static esp_ble_mesh_sensor_state_t sensor_states[2] = {
+static esp_ble_mesh_sensor_state_t sensor_states[3] = {
     /* Mesh Model Spec:
      * Multiple instances of the Sensor states may be present within the same model,
      * provided that each instance has a unique value of the Sensor Property ID to
@@ -192,6 +197,11 @@ static gpio_num_t i2c_gpio_scl = 19;
 static uint32_t i2c_frequency = 100000;
 static i2c_port_t i2c_port = I2C_NUM_0;
 
+/*
+ * i2c_master_driver_initialize()
+ * this function is used for initialize the i2c.
+ */
+
 static esp_err_t i2c_master_driver_initialize(void)
 {
     i2c_config_t conf = {
@@ -257,6 +267,41 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
         break;
     default:
         break;
+    }
+}
+
+/*
+ * purpose  : combine master mode i2c write and i2c read into single api.
+ * read_bit : True: read mode; False: write mode
+ * data     :
+ *           data[0]: sensor register address we are interested in,
+ *           data[1 : data_len + 1]: it is used to store the data we want to write into register or
+ *                                   read from register.
+ * data_len : The length of data we get from register or write in register
+ */
+
+static void i2c_send_to_BME280(uint8_t* data, size_t data_len, bool ack_en, bool read_bit) {
+    i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
+    i2c_master_start(cmd_handle);
+    i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | WRITE_BIT, ack_en);  // depend on read_bit
+    i2c_master_write_byte(cmd_handle, data[0], ack_en);
+    if (read_bit) {
+        i2c_master_start(cmd_handle);
+        i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | read_bit, ack_en);
+        i2c_master_read(cmd_handle, data + 1, data_len, ack_en);  // The first byte should be data_addr
+    } else {
+        i2c_master_write(cmd_handle, data + 1, data_len, ack_en); // The first byte should be data_addr
+    }
+    i2c_master_stop(cmd_handle);
+    esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd_handle, 1000/portTICK_RATE_MS);
+    i2c_cmd_link_delete(cmd_handle);
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Success");
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        ESP_LOGW(TAG, "Bus is busy");
+    } else {
+        ESP_LOGW(TAG, "Failed");
     }
 }
 
@@ -728,3 +773,4 @@ void app_main(void)
         ESP_LOGE(TAG, "Bluetooth mesh init failed (err %d)", err);
     }
 }
+

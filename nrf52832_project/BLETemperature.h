@@ -1,10 +1,11 @@
 #ifndef BLE_TEMPERATURE_H
 #define BLE_TEMPERATURE_H
 
-#include <>
+#include "driver/i2c.h"
 
 #define BME280_ADDR 0x76
 #define BME280_ADDR_ALTER 0x77
+
 
 /*!
  *  @brief Register addresses
@@ -45,6 +46,7 @@ enum {
   BME280_REGISTER_TEMPDATA = 0xFA,
   BME280_REGISTER_HUMIDDATA = 0xFD
 };
+
 
 struct calib_param_temp // calibration parameter of temperature
 {
@@ -100,17 +102,17 @@ struct raw_result
     long int t_fine;
 } raw_data = {0};
 
-struct bme280_reg
+struct reg
 {
     uint8_t ctrl_meas_reg;          //
     uint8_t config_reg;             //
     uint8_t ctrl_hum_reg;           //
-} register = {0};
+} bme280_r = {0};
 
-static bool init(){
-    register.ctrl_meas_reg = (INSTRUCTION.osrs_t << 5) | (INSTRUCTION.osrs_p << 2) | INSTRUCTION.mode;
-    register.config_reg    = (INSTRUCTION.t_sb << 5) | (INSTRUCTION.filter << 2) | INSTRUCTION.spi3w_en;
-    register.ctrl_hum_reg  = INSTRUCTION.osrs_h;
+static bool BME280_init(){
+    bme280_r.ctrl_meas_reg = (INSTRUCTION.osrs_t << 5) | (INSTRUCTION.osrs_p << 2) | INSTRUCTION.mode;
+    bme280_r.config_reg    = (INSTRUCTION.t_sb << 5) | (INSTRUCTION.filter << 2) | INSTRUCTION.spi3w_en;
+    bme280_r.ctrl_hum_reg  = INSTRUCTION.osrs_h;
 
     writeReg(0xF2,register.ctrl_hum_reg);
     writeReg(0xF4,register.ctrl_meas_reg);
@@ -122,30 +124,6 @@ static void readTrim()
 {
     uint8_t data[32] = {0};
     uint8_t i = 0;
-}
-
-
-/*
- * use
- */
-static void Write_Reg(uint8_t reg_addr, uint8_t data)
-{
-
-}
-
-class BME280
-{
-    public:
-        BME280();                                               // constructor
-        bool init();                                            // initialization
-        unsigned char read_address();                           // check current address
-        signed long int calibration_T(signed long int adc_T);   // calibrate the temperature data
-        signed long int calibration_P(signed long int adc_P);   // calibrate the atmospheric pressure data
-        signed long int calibration_H(signed long int adc_H);   // calibrate the humidity data
-        void readData();                                        // read the raw data from sensor
-        void readTrim();                                        // read parameter from
-        void writeReg(uint8_t address, uint8_t regData);        // write register of address
-
 }
 
 #endif

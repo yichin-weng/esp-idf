@@ -190,7 +190,7 @@ static int do_i2cget_cmd(int argc, char **argv)
     i2c_driver_install(i2c_port, I2C_MODE_MASTER, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
     i2c_master_driver_initialize();
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
+    i2c_master_start(cmd); /* I guess this part is not needed because is equivalent to */
     if (data_addr != -1) {
         i2c_master_write_byte(cmd, chip_addr << 1 | WRITE_BIT, ACK_CHECK_EN);
         i2c_master_write_byte(cmd, data_addr, ACK_CHECK_EN);
