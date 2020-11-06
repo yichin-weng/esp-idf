@@ -130,15 +130,15 @@ void setup()
 
  /*
   *  initialization of CO2 sensor(MHZ14A)
-  if (co2.isPreHeating()) {
-    Serial.print("Preheating");
-    while (co2.isPreHeating()) {
-      Serial.print(".");
-      delay(100);
-    }
-    Serial.println();
-  }
-*/
+  *  if (co2.isPreHeating()) {
+  *  Serial.print("Preheating");
+  *  while (co2.isPreHeating()) {
+  *    Serial.print(".");
+  *    delay(100);
+  *  }
+  *  Serial.println();
+  *  }
+  */
 }
 
 void startAdv(void)
@@ -399,7 +399,6 @@ void readData()
 
 signed long int calibration_T(signed long int adc_T)
 {
-
     signed long int var1, var2, T;
     var1 = ((((adc_T >> 3) - ((signed long int)dig_T1<<1))) * ((signed long int)dig_T2)) >> 11;
     var2 = (((((adc_T >> 4) - ((signed long int)dig_T1)) * ((adc_T>>4) - ((signed long int)dig_T1))) >> 12) * ((signed long int)dig_T3)) >> 14;

@@ -66,6 +66,7 @@
  * Minimum value: -64.0, maximum value: 63.5.
  * A value of 0xFF represents 'value is not known'.
  */
+
 static int8_t indoor_temp = 40;     /* Indoor temperature is 20 Degrees Celsius */
 static int8_t outdoor_temp = 60;    /* Outdoor temperature is 30 Degrees Celsius */
 
@@ -76,6 +77,28 @@ static int8_t outdoor_temp = 60;    /* Outdoor temperature is 30 Degrees Celsius
 #define SENSOR_UPDATE_INTERVAL      ESP_BLE_MESH_SENSOR_NOT_APPL_UPDATE_INTERVAL
 
 static uint8_t dev_uuid[ESP_BLE_MESH_OCTET16_LEN] = { 0x32, 0x10 };
+
+/*
+
+ */
+static uint16_t dig_T1;
+static int16_t dig_T2;
+static int16_t dig_T3;
+static uint16_t dig_P1;
+static int16_t dig_P2;
+static int16_t dig_P3;
+static int16_t dig_P4;
+static int16_t dig_P5;
+static int16_t dig_P6;
+static int16_t dig_P7;
+static int16_t dig_P8;
+static int16_t dig_P9;
+static int8_t  dig_H1;
+static int16_t dig_H2;
+static int8_t  dig_H3;
+static int16_t dig_H4;
+static int16_t dig_H5;
+static int8_t  dig_H6;
 
 /*
  * By doing the idf.py menuconfig, we enable the Macro
@@ -256,7 +279,7 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
         break;
     case ESP_BLE_MESH_NODE_PROV_COMPLETE_EVT:
         ESP_LOGI(TAG, "ESP_BLE_MESH_NODE_PROV_COMPLETE_EVT");
-        (param->node_prov_complete.net_idx, param->node_prov_complete.addr,
+        prov_complete(param->node_prov_complete.net_idx, param->node_prov_complete.addr,
             param->node_prov_complete.flags, param->node_prov_complete.iv_index);
         break;
     case ESP_BLE_MESH_NODE_PROV_RESET_EVT:
@@ -270,13 +293,15 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
     }
 }
 
-/*
- * purpose  : combine master mode i2c write and i2c read into single api.
- * read_bit : True: read mode; False: write mode
- * data     :
- *           data[0]: sensor register address we are interested in,
- *           data[1 : data_len + 1]: it is used to store the data we want to write into register or
- *                                   read from register.
+/* @brief   Combine master mode i2c write and i2c read into single api.
+ *          @note
+ *          The handle which deals with i2c interface will be created and destroyed when this function is called
+ * @param
+ *          read_bit : True: read mode; False: write mode
+ *          data:
+ *                  data[0]: sensor register address we are interested in,
+ *                  data[1 : data_len + 1]: it is used to store the data we want to write into register or
+ *                  read from register.
  * data_len : The length of data we get from register or write in register
  */
 
@@ -296,13 +321,156 @@ static void i2c_send_to_BME280(uint8_t* data, size_t data_len, bool ack_en, bool
     esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd_handle, 1000/portTICK_RATE_MS);
     i2c_cmd_link_delete(cmd_handle);
 
-    if (ret == ESP_OK) {
+    if (err == ESP_OK) {
         ESP_LOGI(TAG, "Success");
-    } else if (ret == ESP_ERR_TIMEOUT) {
+    } else if (err == ESP_ERR_TIMEOUT) {
         ESP_LOGW(TAG, "Bus is busy");
     } else {
         ESP_LOGW(TAG, "Failed");
     }
+}
+
+/* @brief   Initialize BME280 with structure.
+ *
+ */
+static void BME280_initialize() {
+  uint8_t osrs_t = 1;             //Temperature oversampling x 1
+  uint8_t osrs_p = 1;             //Pressure oversampling x 1
+  uint8_t osrs_h = 1;             //Humidity oversampling x 1
+  uint8_t mode = 3;               //Normal mode
+  uint8_t t_sb = 5;               //Tstandby 1000ms
+  uint8_t filter = 0;             //Filter off
+  uint8_t spi3w_en = 0;           //3-wire SPI Disable
+
+  uint8_t ctrl_meas_reg[2] = { 0xF2, (osrs_t << 5) | (osrs_p << 2) | mode};
+  uint8_t config_reg[2]    = { 0xF4, (t_sb << 5) | (filter << 2) | spi3w_en};
+  uint8_t ctrl_hum_reg[2]  = { 0xF5, osrs_h};
+
+  /*
+   * write register
+   */
+  i2c_send_to_BME280(ctrl_meas_reg, 2, true, false);
+  i2c_send_to_BME280(config_reg, 2, true, false);
+  i2c_send_to_BME280(ctrl_hum_reg, 2, true, false);
+}
+
+/* @brief read raw data from BME280
+ *
+ *
+ */
+
+static void BME280_readData()
+{
+    int i = 0;
+    uint32_t data[9] = { 0xF7, 0,0,0,0,0,0,0,0};    // read raw data
+    i2c_send_to_BME280( data, 8, true, true);       // i2c read mode
+    pres_raw = (data[0] << 12) | (data[1] << 4) | (data[2] >> 4);
+    temp_raw = (data[3] << 12) | (data[4] << 4) | (data[5] >> 4);
+    hum_raw  = (data[6] << 8) | data[7];
+}
+
+/* @brief read calibration data
+ *
+ */
+static void BME280_read_calibration() {
+    uint8_t data[33] = {0};
+    uint8_t i = 0;
+    data[0] = 0x88;
+    i2c_send_to_BME280(data ,24 ,true ,true );
+    dig_T1 = (data[2] << 8) | data[1];
+    dig_T2 = (data[4] << 8) | data[3];
+    dig_T3 = (data[6] << 8) | data[5];
+    dig_P1 = (data[8] << 8) | data[7];
+    dig_P2 = (data[10] << 8) | data[9];
+    dig_P3 = (data[12]<< 8) | data[11];
+    dig_P4 = (data[14]<< 8) | data[13];
+    dig_P5 = (data[16]<< 8) | data[15];
+    dig_P6 = (data[18]<< 8) | data[17];
+    dig_P7 = (data[20]<< 8) | data[19];
+    dig_P8 = (data[22]<< 8) | data[21];
+    dig_P9 = (data[24]<< 8) | data[23];
+    data[24] = 0xA1;
+    i2c_send_to_BME280(data+25, 1, true, true);
+    dig_H1 = data[25];
+    data[25] = 0xE1;
+    i2c_send_to_BME280(data+26, 7, true, true);
+    dig_H2 = (data[27]<< 8) | data[26];
+    dig_H3 = data[28];
+    dig_H4 = (data[29]<< 4) | (0x0F & data[30]);
+    dig_H5 = (data[31] << 4) | ((data[30] >> 4) & 0x0F);
+    dig_H6 = data[32];
+}
+
+static signed long int calibration_T(signed long int adc_T)
+{
+    signed long int var1, var2, T;
+    var1 = ((((adc_T >> 3) - ((signed long int)dig_T1<<1))) * ((signed long int)dig_T2)) >> 11;
+    var2 = (((((adc_T >> 4) - ((signed long int)dig_T1)) * ((adc_T>>4) - ((signed long int)dig_T1))) >> 12) * ((signed long int)dig_T3)) >> 14;
+
+    t_fine = var1 + var2;
+    T = (t_fine * 5 + 128) >> 8;
+    return T;
+}
+
+static unsigned long int calibration_P(signed long int adc_P)
+{
+    signed long int var1, var2;
+    unsigned long int P;
+    var1 = (((signed long int)t_fine)>>1) - (signed long int)64000;
+    var2 = (((var1>>2) * (var1>>2)) >> 11) * ((signed long int)dig_P6);
+    var2 = var2 + ((var1*((signed long int)dig_P5))<<1);
+    var2 = (var2>>2)+(((signed long int)dig_P4)<<16);
+    var1 = (((dig_P3 * (((var1>>2)*(var1>>2)) >> 13)) >>3) + ((((signed long int)dig_P2) * var1)>>1))>>18;
+    var1 = ((((32768+var1))*((signed long int)dig_P1))>>15);
+    if (var1 == 0)
+    {
+        return 0;
+    }
+    P = (((unsigned long int)(((signed long int)1048576)-adc_P)-(var2>>12)))*3125;
+    if(P<0x80000000)
+    {
+       P = (P << 1) / ((unsigned long int) var1);
+    }
+    else
+    {
+        P = (P / (unsigned long int)var1) * 2;
+    }
+    var1 = (((signed long int)dig_P9) * ((signed long int)(((P>>3) * (P>>3))>>13)))>>12;
+    var2 = (((signed long int)(P>>2)) * ((signed long int)dig_P8))>>13;
+    P = (unsigned long int)((signed long int)P + ((var1 + var2 + dig_P7) >> 4));
+    return P;
+}
+
+static unsigned long int calibration_H(signed long int adc_H)
+{
+    signed long int v_x1;
+
+    v_x1 = (t_fine - ((signed long int)76800));
+    v_x1 = (((((adc_H << 14) -(((signed long int)dig_H4) << 20) - (((signed long int)dig_H5) * v_x1)) +
+              ((signed long int)16384)) >> 15) * (((((((v_x1 * ((signed long int)dig_H6)) >> 10) *
+              (((v_x1 * ((signed long int)dig_H3)) >> 11) + ((signed long int) 32768))) >> 10) + (( signed long int)2097152)) *
+              ((signed long int) dig_H2) + 8192) >> 14));
+   v_x1 = (v_x1 - (((((v_x1 >> 15) * (v_x1 >> 15)) >> 7) * ((signed long int)dig_H1)) >> 4));
+   v_x1 = (v_x1 < 0 ? 0 : v_x1);
+   v_x1 = (v_x1 > 419430400 ? 419430400 : v_x1);
+   return (unsigned long int)(v_x1 >> 12);
+}
+
+/*
+ * BME280
+ */
+static void BME280_data() {
+    double temp_act = 0.0;
+    double press_act = 0.0;
+    double hum_act = 0.0;
+    signed long int temp_cal;
+    unsigned long int press_cal,hum_cal;
+    temp_cal = calibration_T(temp_raw);
+    press_cal = calibration_P(pres_raw);
+    hum_cal = calibration_H(hum_raw);
+    temp_act = (double) temp_cal / 100.0;
+    press_act = (double) press_cal / 100.0;
+    hum_act = (double) hum_cal / 100.0;
 }
 
 static void example_ble_mesh_config_server_cb(esp_ble_mesh_cfg_server_cb_event_t event,
@@ -730,12 +898,16 @@ static esp_err_t ble_mesh_init(void)
         return err;
     }
     /* create i2c handle, and test i2c interface */
-    cmd_handle = i2c_cmd_link_create();
+    i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
     i2c_master_start(cmd_handle);
     i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | WRITE_BIT, ACK_CHECK_EN);
     i2c_master_stop(cmd_handle);
-    esp_err_t ret = i2c_master_cmd_begin(0, cmd, 50 / portTICK_RATE_MS) // 50ms
-    i2c_cmd_link_delete(cmd);
+    esp_err_t ret = i2c_master_cmd_begin(0, cmd_handle, 50 / portTICK_RATE_MS); // 50ms
+    i2c_cmd_link_delete(cmd_handle);
+
+    BME280_initialize();
+
+    BME280_read_calibration();
 
     board_led_operation(LED_G, LED_ON); // this part is not needed
 
