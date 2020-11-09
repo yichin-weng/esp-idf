@@ -101,6 +101,9 @@ static void mesh_example_info_store(void)
     ble_mesh_nvs_store(NVS_HANDLE, NVS_KEY, &store, sizeof(store));
 }
 
+/*
+
+ */
 static void mesh_example_info_restore(void)
 {
     esp_err_t err = ESP_OK;

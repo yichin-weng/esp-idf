@@ -310,6 +310,11 @@ static esp_err_t ble_mesh_init(void)
     return err;
 }
 
+/*
+ * there is no signal to trigger the model to operate the bluetooth protocol. therefore, it is needed to
+ *  create a one-shot function to trigger the operation.
+ */
+
 void app_main(void)
 {
     esp_err_t err;
