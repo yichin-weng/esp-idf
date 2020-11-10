@@ -176,7 +176,7 @@ static esp_ble_mesh_sensor_state_t sensor_states[3] = {
         .descriptor.measure_period = SENSOR_MEASURE_PERIOD,
         .descriptor.update_interval = SENSOR_UPDATE_INTERVAL,
         .sensor_data.format = ESP_BLE_MESH_SENSOR_DATA_FORMAT_A,
-        .sensor_data.length = 8, /* 0 represents the length is 1 */
+        .sensor_data.length = 7, /* 0 represents the length is 1 */
         .sensor_data.raw_value = &sensor_data_2,
     },
 };
@@ -298,7 +298,8 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
 
 /* @brief   Combine master mode i2c write and i2c read into single api.
  *          @note
- *          The handle which deals with i2c interface will be created and destroyed when this function is called
+ *          The handle which deals with i2c interface will be created and destroyed when this function is called.
+ *          When using read mode, the last byte will not return ack signal
  * @param
  *          read_bit : True: read mode; False: write mode
  *          data:
@@ -308,27 +309,27 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
  * data_len : The length of data we get from register or write in register
  */
 
-static void i2c_send_to_BME280(uint8_t* data, size_t data_len, bool ack_en, bool read_bit) {
+static void i2c_send_to_BME280(uint8_t* data, size_t data_len,  bool read_bit) {
     i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
     i2c_master_start(cmd_handle);
-    i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | WRITE_BIT, ACK_CHECK_DIS);  // depend on read_bit
-    i2c_master_write_byte(cmd_handle, data[0], ACK_CHECK_DIS);
+    i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | WRITE_BIT, I2C_MASTER_ACK);  // depend on read_bit
+    i2c_master_write_byte(cmd_handle, data[0], I2C_MASTER_ACK);
     if (read_bit) {
         i2c_master_start(cmd_handle);
-        i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | read_bit, ACK_CHECK_DIS);
+        i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | read_bit, I2C_MASTER_ACK);
         if (data_len > 1)
-            i2c_master_read(cmd_handle, data + 1, data_len - 1, ACK_CHECK_DIS);  // The first byte should be data_addr
+            i2c_master_read(cmd_handle, data + 1, data_len - 1, I2C_MASTER_LAST_NACK);  // The first byte should be data_addr
         else
-            i2c_master_read_byte(cmd_handle, data + data_len -1 , ACK_CHECK_DIS);
+            i2c_master_read_byte(cmd_handle, data + data_len -1 , I2C_MASTER_LAST_NACK);
     } else {
-        i2c_master_write(cmd_handle, data + 1, data_len - 1, ACK_CHECK_DIS); // The first byte should be data_addr
+        i2c_master_write(cmd_handle, data + 1, data_len - 1, I2C_MASTER_ACK); // The first byte should be data_addr
     }
     i2c_master_stop(cmd_handle);
     esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd_handle, 1000/portTICK_RATE_MS);
     i2c_cmd_link_delete(cmd_handle);
 
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Success");
+        ESP_LOGI(TAG, "i2c Success");
     } else if (err == ESP_ERR_TIMEOUT) {
         ESP_LOGW(TAG, "Bus is busy");
     } else {
@@ -355,9 +356,10 @@ static void BME280_initialize() {
   /*
    * write register
    */
-  i2c_send_to_BME280(ctrl_meas_reg, 2, true, false);
-  i2c_send_to_BME280(config_reg, 2, true, false);
-  i2c_send_to_BME280(ctrl_hum_reg, 2, true, false);
+  i2c_send_to_BME280(ctrl_meas_reg, 2, false);
+  i2c_send_to_BME280(config_reg, 2, false);
+  i2c_send_to_BME280(ctrl_hum_reg, 2, false);
+  ESP_LOGI(TAG, "BME280 initialized");
 }
 
 /* @brief read raw data from BME280
@@ -369,10 +371,11 @@ static void BME280_readData()
 {
     int i = 0;
     uint32_t data[9] = { 0xF7, 0,0,0,0,0,0,0,0};    // read raw data
-    i2c_send_to_BME280( data, 8, true, true);       // i2c read mode
-    pres_raw = (data[0] << 12) | (data[1] << 4) | (data[2] >> 4);
-    temp_raw = (data[3] << 12) | (data[4] << 4) | (data[5] >> 4);
-    hum_raw  = (data[6] << 8) | data[7];
+    i2c_send_to_BME280( data, 8, true);       // i2c read mode
+    pres_raw = (data[1] << 12) | (data[2] << 4) | (data[3] >> 4);
+    temp_raw = (data[4] << 12) | (data[5] << 4) | (data[6] >> 4);
+    hum_raw  = (data[7] << 8) | data[8];
+    ESP_LOGI(TAG, "temperature %04lu, pressure %04lu, humidity %04lu", temp_raw, pres_raw, hum_raw);
 }
 
 /* @brief read calibration data
@@ -382,7 +385,7 @@ static void BME280_read_calibration() {
     uint8_t data[33] = {0};
     uint8_t i = 0;
     data[0] = 0x88;
-    i2c_send_to_BME280(data ,24 ,true ,true );
+    i2c_send_to_BME280(data ,24 ,true );
     dig_T1 = (data[2] << 8) | data[1];
     dig_T2 = (data[4] << 8) | data[3];
     dig_T3 = (data[6] << 8) | data[5];
@@ -395,11 +398,13 @@ static void BME280_read_calibration() {
     dig_P7 = (data[20]<< 8) | data[19];
     dig_P8 = (data[22]<< 8) | data[21];
     dig_P9 = (data[24]<< 8) | data[23];
+    ESP_LOGI(TAG, "dig_T1: %u, data[4]: %02x, data[3]: %01x, dig_T2: %u, dig_T3: %u",dig_T1, data[4], data[3], dig_T2, dig_T3 );
     data[24] = 0xA1;
-    i2c_send_to_BME280(data+24, 1, true, true);
-    dig_H1 = data[25];
+    i2c_send_to_BME280(data+24, 1, true);
+    dig_H1 = data[24];
+    ESP_LOGI(TAG, "dig_H1: %d, data[24]: %02x", dig_H1, data[24]);
     data[25] = 0xE1;
-    i2c_send_to_BME280(data+25, 7, true, true);
+    i2c_send_to_BME280(data+25, 7, true);
     dig_H2 = (data[27]<< 8) | data[26];
     dig_H3 = data[28];
     dig_H4 = (data[29]<< 4) | (0x0F & data[30]);
@@ -647,6 +652,15 @@ static void example_ble_mesh_send_sensor_setting_status(esp_ble_mesh_sensor_serv
 }
 
 /*
+ * get data from BME280
+
+
+static void get_data_from_BME280() {
+    net_buf_add(&sensor_data_2, );
+}
+*/
+
+/*
  * get data from sensors
  */
 
@@ -676,6 +690,7 @@ static uint16_t example_ble_mesh_get_sensor_data(esp_ble_mesh_sensor_state_t *st
         /* Use "state->sensor_data.length + 1" because the length of sensor data is zero-based. */
         data_len = state->sensor_data.length + 1;
     }
+    BME280_readData(); // read raw data
 
     memcpy(data, &mpid, mpid_len);
     memcpy(data + mpid_len, state->sensor_data.raw_value->data, data_len);
@@ -914,7 +929,7 @@ static esp_err_t ble_mesh_init(void)
         ESP_LOGE(TAG, "Failed to enable I2C");
         return err;
     }
-    i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | WRITE_BIT, ACK_CHECK_DIS);
+    i2c_master_write_byte(cmd_handle, (BME280_ADDR << 1) | WRITE_BIT, I2C_MASTER_ACK);
     i2c_master_stop(cmd_handle);
     err = i2c_master_cmd_begin(0, cmd_handle, 1000 / portTICK_RATE_MS); // 50ms
     if (err == ESP_ERR_TIMEOUT) {
@@ -932,7 +947,7 @@ static esp_err_t ble_mesh_init(void)
 
     BME280_initialize();
 
-    //BME280_read_calibration();
+    BME280_read_calibration();
 
     board_led_operation(LED_G, LED_ON); // this part is not needed
 
