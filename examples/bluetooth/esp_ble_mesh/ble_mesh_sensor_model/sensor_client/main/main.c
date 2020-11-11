@@ -26,11 +26,15 @@
 #include "ble_mesh_example_init.h"
 #include "board.h"
 
+#include "driver/timer.h"
+
 #ifndef ESP_BLE_MESH_CID_NVAL
 #define ESP_BLE_MESH_CID_NVAL 0xFFFF
 #endif
 
 #define TAG "EXAMPLE"
+
+#define TIMER_INTERVAL0_SEC   (3.4179) // sample test interval for the first timer
 
 #define CID_ESP             0x02E5
 
@@ -98,6 +102,52 @@ static esp_ble_mesh_prov_t provision = {
     .prov_unicast_addr  = PROV_OWN_ADDR,
     .prov_start_address = 0x0005,
 };
+
+static void example_ble_mesh_send_sensor_message(uint32_t opcode);
+
+/*
+ * @ brief this block is used to deal with the timer and periodic event
+ */
+
+static timer_isr_handle_t isr_handle;
+
+static uint32_t send_opcode[] = {
+    [0] = ESP_BLE_MESH_MODEL_OP_SENSOR_DESCRIPTOR_GET,
+    [1] = ESP_BLE_MESH_MODEL_OP_SENSOR_CADENCE_GET,
+    [2] = ESP_BLE_MESH_MODEL_OP_SENSOR_SETTINGS_GET,
+    [3] = ESP_BLE_MESH_MODEL_OP_SENSOR_GET,
+    [4] = ESP_BLE_MESH_MODEL_OP_SENSOR_SERIES_GET,
+};
+
+static IRAM_ATTR timer_cb(){
+    example_ble_mesh_send_sensor_message(send_opcode[3]);
+}
+
+
+
+static void esp_timer_init() {
+    /* Select and initialize basic parameters of the timer */
+    timer_config_t config = {
+        .divider = TIMER_DIVIDER,
+        .counter_dir = TIMER_COUNT_UP,
+        .counter_en = TIMER_PAUSE,
+        .alarm_en = TIMER_ALARM_EN,
+        .auto_reload = TEST_WITHOUT_RELOAD,
+    }; // default clock source is APB
+    timer_init(TIMER_GROUP_0, TIMER_0, &config);
+
+    /* Timer's counter will initially start from value below.
+       Also, if auto_reload is set, this value will be automatically reload on alarm */
+    timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0x00000000ULL);
+
+    /* Configure the alarm value and the interrupt on alarm. */
+    timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, TIMER_INTERVAL0_SEC * TIMER_SCALE);
+    timer_enable_intr(TIMER_GROUP_0, TIMER_0);
+    timer_isr_register(TIMER_GROUP_0, TIMER_0, timer_cb,
+                       (void *) TIMER_0, ESP_INTR_FLAG_IRAM, NULL);
+
+    timer_start(TIMER_GROUP_0, TIMER_0);
+}
 
 static void example_ble_mesh_set_msg_common(esp_ble_mesh_client_common_param_t *common,
                                             esp_ble_mesh_node_t *node,

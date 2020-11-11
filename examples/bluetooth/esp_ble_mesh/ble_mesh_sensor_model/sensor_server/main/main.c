@@ -61,14 +61,6 @@
 #define SENSOR_PROPERTY_ID_3        0x0061  /* Present Indoor O2 concentration */
 #define SENSOR_PROPERTY_ID_4        0x0062  /* Present Inddor humidity */
 
-/* The characteristic of the two device properties is "Temperature 8", which is
- * used to represent a measure of temperature with a unit of 0.5 degree Celsius.
- * Minimum value: -64.0, maximum value: 63.5.
- * A value of 0xFF represents 'value is not known'.
- */
-
-static int8_t indoor_temp = 40;     /* Indoor temperature is 20 Degrees Celsius */
-static int8_t outdoor_temp = 60;    /* Outdoor temperature is 30 Degrees Celsius */
 
 unsigned long int hum_raw,temp_raw,pres_raw;
 signed long int t_fine;
@@ -82,7 +74,7 @@ signed long int t_fine;
 static uint8_t dev_uuid[ESP_BLE_MESH_OCTET16_LEN] = { 0x32, 0x10 };
 
 /*
-
+ * calibration parameter for temperature , humidity, pressure
  */
 static uint16_t dig_T1;
 static int16_t dig_T2;
@@ -102,6 +94,23 @@ static int8_t  dig_H3;
 static int16_t dig_H4;
 static int16_t dig_H5;
 static int8_t  dig_H6;
+
+/*
+ * Final data for temperature , pressure , humidity
+ */
+
+static union {
+    double  temp_act;
+    uint8_t temp_data[8];
+} my_temp;
+static union {
+    double  press_act;
+    uint8_t press_data[8];
+} my_press;
+static union {
+    double  hum_act;
+    uint8_t hum_data[8];
+} my_hum;
 
 /*
  * By doing the idf.py menuconfig, we enable the Macro
@@ -125,8 +134,8 @@ static esp_ble_mesh_cfg_srv_t config_server = {
     .relay_retransmit = ESP_BLE_MESH_TRANSMIT(2, 20),
 };
 
-NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_0, 1);
-NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_1, 1);
+NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_0, 8);
+NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_1, 8);
 NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_2, 8);
 
 static esp_ble_mesh_sensor_state_t sensor_states[3] = {
@@ -154,7 +163,7 @@ static esp_ble_mesh_sensor_state_t sensor_states[3] = {
         .descriptor.measure_period = SENSOR_MEASURE_PERIOD,
         .descriptor.update_interval = SENSOR_UPDATE_INTERVAL,
         .sensor_data.format = ESP_BLE_MESH_SENSOR_DATA_FORMAT_A,
-        .sensor_data.length = 0, /* 0 represents the length is 1 */
+        .sensor_data.length = 7, /* 0 represents the length is 1 */
         .sensor_data.raw_value = &sensor_data_0,
     },
     [1] = {
@@ -165,7 +174,7 @@ static esp_ble_mesh_sensor_state_t sensor_states[3] = {
         .descriptor.measure_period = SENSOR_MEASURE_PERIOD,
         .descriptor.update_interval = SENSOR_UPDATE_INTERVAL,
         .sensor_data.format = ESP_BLE_MESH_SENSOR_DATA_FORMAT_A,
-        .sensor_data.length = 0, /* 0 represents the length is 1 */
+        .sensor_data.length = 7, /* 0 represents the length is 1 */
         .sensor_data.raw_value = &sensor_data_1,
     },
     [2] = {
@@ -256,10 +265,6 @@ static void prov_complete(uint16_t net_idx, uint16_t addr, uint8_t flags, uint32
     ESP_LOGI(TAG, "net_idx 0x%03x, addr 0x%04x", net_idx, addr);
     ESP_LOGI(TAG, "flags 0x%02x, iv_index 0x%08x", flags, iv_index);
     board_led_operation(LED_G, LED_OFF);
-
-    /* Initialize the indoor and outdoor temperatures for each sensor.  */
-    net_buf_simple_add_u8(&sensor_data_0, indoor_temp);
-    net_buf_simple_add_u8(&sensor_data_1, outdoor_temp);
 }
 
 static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
@@ -349,9 +354,9 @@ static void BME280_initialize() {
   uint8_t filter = 0;             //Filter off
   uint8_t spi3w_en = 0;           //3-wire SPI Disable
 
-  uint8_t ctrl_meas_reg[2] = { 0xF2, (osrs_t << 5) | (osrs_p << 2) | mode};
-  uint8_t config_reg[2]    = { 0xF4, (t_sb << 5) | (filter << 2) | spi3w_en};
-  uint8_t ctrl_hum_reg[2]  = { 0xF5, osrs_h};
+  uint8_t ctrl_meas_reg[2] = { 0xF4, (osrs_t << 5) | (osrs_p << 2) | mode};
+  uint8_t config_reg[2]    = { 0xF5, (t_sb << 5) | (filter << 2) | spi3w_en};
+  uint8_t ctrl_hum_reg[2]  = { 0xF2, osrs_h};
 
   /*
    * write register
@@ -362,20 +367,19 @@ static void BME280_initialize() {
   ESP_LOGI(TAG, "BME280 initialized");
 }
 
-/* @brief read raw data from BME280
- *
- *
+/*
+ * @brief read raw data from BME280
  */
 
 static void BME280_readData()
 {
     int i = 0;
-    uint32_t data[9] = { 0xF7, 0,0,0,0,0,0,0,0};    // read raw data
-    i2c_send_to_BME280( data, 8, true);       // i2c read mode
+    uint8_t data[9] = { 0xF7, 0,0,0,0,0,0,0,0};    // read raw data
+    i2c_send_to_BME280( data, 8, true);             // i2c read mode
+    ESP_LOGI(TAG, "data[0]: %02x", data[0]);
     pres_raw = (data[1] << 12) | (data[2] << 4) | (data[3] >> 4);
     temp_raw = (data[4] << 12) | (data[5] << 4) | (data[6] >> 4);
     hum_raw  = (data[7] << 8) | data[8];
-    ESP_LOGI(TAG, "temperature %04lu, pressure %04lu, humidity %04lu", temp_raw, pres_raw, hum_raw);
 }
 
 /* @brief read calibration data
@@ -383,7 +387,6 @@ static void BME280_readData()
  */
 static void BME280_read_calibration() {
     uint8_t data[33] = {0};
-    uint8_t i = 0;
     data[0] = 0x88;
     i2c_send_to_BME280(data ,24 ,true );
     dig_T1 = (data[2] << 8) | data[1];
@@ -468,20 +471,35 @@ static unsigned long int calibration_H(signed long int adc_H)
 }
 
 /*
- * BME280
+ * check write register is correct or not
  */
+
+static void BME280_read_configuration() {
+    uint8_t ctrl_meas_reg[2] = { 0xF4, 0};
+    uint8_t config_reg[2]    = { 0xF5, 0};
+    uint8_t ctrl_hum_reg[2]  = { 0xF2, 0};
+    i2c_send_to_BME280(ctrl_meas_reg, 2, true);
+    ESP_LOGI(TAG, "ctrl_meas_reg[0]: %02x, ctrl_meas_reg[1]: %02x", ctrl_meas_reg[0], ctrl_meas_reg[1]);
+    i2c_send_to_BME280(config_reg, 2, true);
+    ESP_LOGI(TAG, "config_reg[0]: %02x, config_reg[1]: %02x", config_reg[0], config_reg[1]);
+    i2c_send_to_BME280(ctrl_hum_reg, 2, true);
+    ESP_LOGI(TAG, "ctrl_hum_reg[0]: %02x, ctrl_hum_reg[1]: %02x", ctrl_hum_reg[0], ctrl_hum_reg[1]);
+}
+
+/*
+ * BME280 final data
+ */
+
 static void BME280_data() {
-    double temp_act = 0.0;
-    double press_act = 0.0;
-    double hum_act = 0.0;
     signed long int temp_cal;
     unsigned long int press_cal,hum_cal;
     temp_cal = calibration_T(temp_raw);
     press_cal = calibration_P(pres_raw);
     hum_cal = calibration_H(hum_raw);
-    temp_act = (double) temp_cal / 100.0;
-    press_act = (double) press_cal / 100.0;
-    hum_act = (double) hum_cal / 100.0;
+    my_temp.temp_act = (double) temp_cal / 100.0;
+    my_press.press_act = (double) press_cal / 100.0;
+    my_hum.hum_act = (double) hum_cal / 1024.0;
+    ESP_LOGI(TAG, "temperature: %lf, pressure: %lf, humidity: %lf", my_temp.temp_act, my_press.press_act, my_hum.hum_act);
 }
 
 static void example_ble_mesh_config_server_cb(esp_ble_mesh_cfg_server_cb_event_t event,
@@ -652,15 +670,6 @@ static void example_ble_mesh_send_sensor_setting_status(esp_ble_mesh_sensor_serv
 }
 
 /*
- * get data from BME280
-
-
-static void get_data_from_BME280() {
-    net_buf_add(&sensor_data_2, );
-}
-*/
-
-/*
  * get data from sensors
  */
 
@@ -690,7 +699,7 @@ static uint16_t example_ble_mesh_get_sensor_data(esp_ble_mesh_sensor_state_t *st
         /* Use "state->sensor_data.length + 1" because the length of sensor data is zero-based. */
         data_len = state->sensor_data.length + 1;
     }
-    BME280_readData(); // read raw data
+
 
     memcpy(data, &mpid, mpid_len);
     memcpy(data + mpid_len, state->sensor_data.raw_value->data, data_len);
@@ -706,7 +715,12 @@ static void example_ble_mesh_send_sensor_status(esp_ble_mesh_sensor_server_cb_pa
     uint32_t mpid = 0;
     esp_err_t err;
     int i;
+    BME280_readData();  // read raw data
+    BME280_data();      // get data after calibration
 
+    memcpy(sensor_states[0].sensor_data.raw_value->data, my_temp.temp_data, 8);
+    memcpy(sensor_states[1].sensor_data.raw_value->data, my_hum.hum_data, 8);
+    memcpy(sensor_states[2].sensor_data.raw_value->data, my_press.press_data, 8);
     /**
      * Sensor Data state from Mesh Model Spec
      * |--------Field--------|-Size (octets)-|------------------------Notes-------------------------|
@@ -946,6 +960,8 @@ static esp_err_t ble_mesh_init(void)
     i2c_cmd_link_delete(cmd_handle);
 
     BME280_initialize();
+
+    BME280_read_configuration();
 
     BME280_read_calibration();
 
