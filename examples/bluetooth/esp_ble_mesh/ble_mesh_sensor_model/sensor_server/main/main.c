@@ -17,6 +17,7 @@
  *
  *
  * (Optional: if there is any problem with i2c, check i2c_driver_install FLAG:ESP_INTR_FLAG_IRAM)
+ *
  */
 
 #include <stdio.h>
@@ -959,6 +960,9 @@ static esp_err_t ble_mesh_init(void)
     }
     i2c_cmd_link_delete(cmd_handle);
 
+    /*
+     * Initialize BME280
+     */
     BME280_initialize();
 
     BME280_read_configuration();
