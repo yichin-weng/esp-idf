@@ -19,6 +19,11 @@
  * (Optional: if there is any problem with i2c, check i2c_driver_install FLAG:ESP_INTR_FLAG_IRAM)
  */
 
+/*
+ * CO2 model S-300E (S-300) . If we read the data from CO2 model right after power on, the data will be default value
+ * 500ppm. If the data sometimes shows 500ppm, it means there may be some problems with power.
+ */
+
 #include <stdio.h>
 #include <string.h>
 
@@ -40,6 +45,21 @@
 
 #define CID_ESP     0x02E5
 #define BME280_ADDR 0x76
+#define S300_ADDR   0x31
+
+/*
+ Macro of operation code of CO2 sensor
+ */
+
+#define SLEEPING_MODE   0x53
+#define WAKE_UP_MODE    0x57
+#define READ_DATA       0x52
+#define MCDL_MODE       0x4D  // start manual calibration
+#define ACDL_MODE       0x41  // start automatic calibration
+#define MCDL_END        0x45  // end of calibration
+#define CLEAR           0x43  // clear calibration data
+#define UART_CHANGE     0x55  // change uart data rate
+#define TARGET_PPM      0x54  // recalibration by target PPM
 
 /*
  Macro for I2C setting:
@@ -60,7 +80,6 @@
 #define SENSOR_PROPERTY_ID_2        0x0060  /* Present Indoor CO2 concentration */
 #define SENSOR_PROPERTY_ID_3        0x0061  /* Present Indoor O2 concentration */
 #define SENSOR_PROPERTY_ID_4        0x0062  /* Present Inddor humidity */
-
 
 unsigned long int hum_raw,temp_raw,pres_raw;
 signed long int t_fine;
@@ -300,6 +319,14 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
         break;
     }
 }
+
+/* @brief
+ *
+ */
+static void i2c_send_to_S300(uint8_t* data, size_t data_len, bool read_bit) {
+
+}
+
 
 /* @brief   Combine master mode i2c write and i2c read into single api.
  *          @note
