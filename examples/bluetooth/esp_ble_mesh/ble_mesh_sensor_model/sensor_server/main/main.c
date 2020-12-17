@@ -120,6 +120,11 @@ static int8_t  dig_H6;
  */
 
 static union {
+    uint8_t co2_data[2];
+    uint16_t co2_act;
+} my_co2;
+
+static union {
     double  temp_act;
     uint8_t temp_data[8];
 } my_temp;
@@ -157,8 +162,10 @@ static esp_ble_mesh_cfg_srv_t config_server = {
 NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_0, 8);
 NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_1, 8);
 NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_2, 8);
+NET_BUF_SIMPLE_DEFINE_STATIC(sensor_data_3, 2);
 
-static esp_ble_mesh_sensor_state_t sensor_states[3] = {
+
+static esp_ble_mesh_sensor_state_t sensor_states[4] = {
     /* Mesh Model Spec:
      * Multiple instances of the Sensor states may be present within the same model,
      * provided that each instance has a unique value of the Sensor Property ID to
@@ -207,6 +214,17 @@ static esp_ble_mesh_sensor_state_t sensor_states[3] = {
         .sensor_data.format = ESP_BLE_MESH_SENSOR_DATA_FORMAT_A,
         .sensor_data.length = 7, /* 0 represents the length is 1 */
         .sensor_data.raw_value = &sensor_data_2,
+    },
+    [3] = {
+        .sensor_property_id = SENSOR_PROPERTY_ID_2,
+        .descriptor.positive_tolerance = SENSOR_POSITIVE_TOLERANCE,
+        .descriptor.negative_tolerance = SENSOR_NEGATIVE_TOLERANCE,
+        .descriptor.sampling_function = SENSOR_SAMPLE_FUNCTION,
+        .descriptor.measure_period = SENSOR_MEASURE_PERIOD,
+        .descriptor.update_interval = SENSOR_UPDATE_INTERVAL,
+        .sensor_data.format = ESP_BLE_MESH_SENSOR_DATA_FORMAT_A,
+        .sensor_data.length = 2, /* 0 represents the length is 1 */
+        .sensor_data.raw_value = &sensor_data_3,
     },
 };
 
@@ -321,11 +339,38 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
     }
 }
 
-/* @brief
- *
+/*
+ *  @brief
  */
 static void i2c_send_to_S300(uint8_t* data, size_t data_len, bool read_bit) {
+    uint8_t index = 0;
+    i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
+    i2c_master_start(cmd_handle);
+    i2c_master_write_byte(cmd_handle, (S300_ADDR << 1) | read_bit, I2C_MASTER_ACK);  // depend on read_bit
+    if (read_bit) {
+        while ( index < data_len ) {
+            if (index == data_len - 1) {
+                i2c_master_read_byte(cmd_handle, data + index -1 , I2C_MASTER_LAST_NACK);  // The first byte should be data_addr
+            }
+            else {
+                i2c_master_read_byte(cmd_handle, data + index -1 , I2C_MASTER_LAST_ACK);
+                index++;
+            }
+        }
+    } else {
+        i2c_master_write(cmd_handle, data, data_len - 1, I2C_MASTER_ACK); // The first byte should be data_addr
+    }
+    i2c_master_stop(cmd_handle);
+    esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd_handle, 1000/portTICK_RATE_MS);
+    i2c_cmd_link_delete(cmd_handle);
 
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "i2c Success");
+    } else if (err == ESP_ERR_TIMEOUT) {
+        ESP_LOGW(TAG, "Bus is busy");
+    } else {
+        ESP_LOGE(TAG, "Failed");
+    }
 }
 
 
@@ -370,8 +415,8 @@ static void i2c_send_to_BME280(uint8_t* data, size_t data_len,  bool read_bit) {
     }
 }
 
-/* @brief   Initialize BME280 with structure.
- *
+/*
+ *  @brief  Initialize BME280 with structure.
  */
 static void BME280_initialize() {
   uint8_t osrs_t = 1;             //Temperature oversampling x 1
@@ -396,6 +441,28 @@ static void BME280_initialize() {
 }
 
 /*
+ * @brief   read raw data from S300
+ */
+
+static void S300_readData()
+{
+    uint8_t opcode = READ_DATA;
+    uint8_t data[7] = {0};
+    i2c_send_to_S300(&opcode, 1, false);
+    i2c_send_to_S300(data, 7, true);
+    my_co2.co2_act = (data[1] << 8) | data[2];
+}
+
+/*
+ *  @brief  send commend to S300
+ */
+
+static void S300_send_commend(uint8_t opcode)
+{
+    i2c_send_to_S300(&opcode, 1, false);
+}
+
+/*
  * @brief read raw data from BME280
  */
 
@@ -403,7 +470,7 @@ static void BME280_readData()
 {
     int i = 0;
     uint8_t data[9] = { 0xF7, 0,0,0,0,0,0,0,0};    // read raw data
-    i2c_send_to_BME280( data, 8, true);             // i2c read mode
+    i2c_send_to_BME280( data, 8, true);            // i2c read mode
     ESP_LOGI(TAG, "data[0]: %02x", data[0]);
     pres_raw = (data[1] << 12) | (data[2] << 4) | (data[3] >> 4);
     temp_raw = (data[4] << 12) | (data[5] << 4) | (data[6] >> 4);
@@ -743,12 +810,14 @@ static void example_ble_mesh_send_sensor_status(esp_ble_mesh_sensor_server_cb_pa
     uint32_t mpid = 0;
     esp_err_t err;
     int i;
-    BME280_readData();  // read raw data
+    BME280_readData();  // read raw data from BME280
     BME280_data();      // get data after calibration
+    S300_readData();    // read raw data from S300
 
     memcpy(sensor_states[0].sensor_data.raw_value->data, my_temp.temp_data, 8);
     memcpy(sensor_states[1].sensor_data.raw_value->data, my_hum.hum_data, 8);
     memcpy(sensor_states[2].sensor_data.raw_value->data, my_press.press_data, 8);
+    memcpy(sensor_states[3].sensor_data.raw_value->data, my_co2.co2_data, 2);
     /**
      * Sensor Data state from Mesh Model Spec
      * |--------Field--------|-Size (octets)-|------------------------Notes-------------------------|
