@@ -216,7 +216,7 @@ static esp_ble_mesh_sensor_state_t sensor_states[4] = {
         .sensor_data.raw_value = &sensor_data_2,
     },
     [3] = {
-        .sensor_property_id = SENSOR_PROPERTY_ID_2,
+        .sensor_property_id = SENSOR_PROPERTY_ID_3,
         .descriptor.positive_tolerance = SENSOR_POSITIVE_TOLERANCE,
         .descriptor.negative_tolerance = SENSOR_NEGATIVE_TOLERANCE,
         .descriptor.sampling_function = SENSOR_SAMPLE_FUNCTION,
@@ -267,7 +267,7 @@ static esp_ble_mesh_elem_t elements[] = {
 
 static gpio_num_t i2c_gpio_sda = 21;
 static gpio_num_t i2c_gpio_scl = 22;
-static uint32_t i2c_frequency = 100000;
+static uint32_t i2c_frequency = 33000;
 static i2c_port_t i2c_port = I2C_NUM_0;
 
 /*
@@ -343,22 +343,13 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
  *  @brief
  */
 static void i2c_send_to_S300(uint8_t* data, size_t data_len, bool read_bit) {
-    uint8_t index = 0;
     i2c_cmd_handle_t cmd_handle = i2c_cmd_link_create();
     i2c_master_start(cmd_handle);
     i2c_master_write_byte(cmd_handle, (S300_ADDR << 1) | read_bit, I2C_MASTER_ACK);  // depend on read_bit
     if (read_bit) {
-        while ( index < data_len ) {
-            if (index == data_len - 1) {
-                i2c_master_read_byte(cmd_handle, data + index -1 , I2C_MASTER_LAST_NACK);  // The first byte should be data_addr
-            }
-            else {
-                i2c_master_read_byte(cmd_handle, data + index -1 , I2C_MASTER_LAST_ACK);
-                index++;
-            }
-        }
+        i2c_master_read(cmd_handle, data, data_len -1, I2C_MASTER_LAST_NACK);  // The first byte should be data_addr
     } else {
-        i2c_master_write(cmd_handle, data, data_len - 1, I2C_MASTER_ACK); // The first byte should be data_addr
+        i2c_master_write_byte(cmd_handle, *data, I2C_MASTER_ACK); // The first byte should be data_addr
     }
     i2c_master_stop(cmd_handle);
     esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd_handle, 1000/portTICK_RATE_MS);
@@ -447,10 +438,12 @@ static void BME280_initialize() {
 static void S300_readData()
 {
     uint8_t opcode = READ_DATA;
-    uint8_t data[7] = {0};
+    uint8_t data[8] = {0};
     i2c_send_to_S300(&opcode, 1, false);
-    i2c_send_to_S300(data, 7, true);
-    my_co2.co2_act = (data[1] << 8) | data[2];
+    i2c_send_to_S300(data, 8, true);
+    my_co2.co2_data[0] = data[2];
+    my_co2.co2_data[1] = data[1];
+    ESP_LOGI(TAG, "co2 data is: %d", my_co2.co2_act);
 }
 
 /*
@@ -468,10 +461,8 @@ static void S300_send_commend(uint8_t opcode)
 
 static void BME280_readData()
 {
-    int i = 0;
     uint8_t data[9] = { 0xF7, 0,0,0,0,0,0,0,0};    // read raw data
     i2c_send_to_BME280( data, 8, true);            // i2c read mode
-    ESP_LOGI(TAG, "data[0]: %02x", data[0]);
     pres_raw = (data[1] << 12) | (data[2] << 4) | (data[3] >> 4);
     temp_raw = (data[4] << 12) | (data[5] << 4) | (data[6] >> 4);
     hum_raw  = (data[7] << 8) | data[8];
@@ -873,7 +864,7 @@ static void example_ble_mesh_send_sensor_status(esp_ble_mesh_sensor_server_cb_pa
     }
 
     /* Mesh Model Spec:
-     * Or the Length shall represent the value of zero and the Raw Value field shall
+     * Or the Length shall represent the value of zero and the Raw Value field shallkus
      * contain only the Property ID if the requested device property is not recognized
      * by the Sensor Server.
      */
@@ -1055,6 +1046,7 @@ static esp_err_t ble_mesh_init(void)
         ESP_LOGI(TAG, "SUCCESS");
     }
     i2c_cmd_link_delete(cmd_handle);
+
 
     /*
      * Initialize BME280

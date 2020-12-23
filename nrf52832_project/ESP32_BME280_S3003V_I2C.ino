@@ -49,7 +49,7 @@ void setup() {
 
   server.begin();
 
-  
+
   delay(1000); //Take some time to open up the Serial Monitor
 
   //Example Indoor navigation
@@ -64,10 +64,10 @@ void setup() {
 
   pinMode(pin_ACDL, OUTPUT);
   pinMode(pin_MCDL, OUTPUT);
-  
-  
+
+
   Wire.begin();
-  
+
   delay(1000);
 
   configTime( JST, 0, "ntp.nict.jp", "ntp.jst.mfeed.ad.jp");
@@ -90,7 +90,7 @@ void loop() {
 
 
 
-  
+
   //bme_get();
   double temperature, pressure, humidity;
 
@@ -107,13 +107,13 @@ void loop() {
   esp_read_mac(mac3, ESP_MAC_WIFI_STA);
   Serial.printf("[Wi-Fi Station] Mac Address = %02X:%02X:%02X:%02X:%02X:%02X\r\n", mac3[0], mac3[1], mac3[2], mac3[3], mac3[4], mac3[5]);
   sprintf(mac_address,"%02X:%02X:%02X:%02X:%02X:%02X", mac3[0], mac3[1], mac3[2], mac3[3], mac3[4], mac3[5]);
-  
+
   uint8_t mac4[7];
   esp_read_mac(mac4, ESP_MAC_WIFI_SOFTAP);
   Serial.printf("[Wi-Fi SoftAP] Mac Address  = %02X:%02X:%02X:%02X:%02X:%02X\r\n", mac4[0], mac4[1], mac4[2], mac4[3], mac4[4], mac4[5]);
 
   Serial.print("IP address = "); Serial.println(WiFi.localIP());
-  
+
   Serial.print("Temperature = "); Serial.println(temp_c);
   Serial.print("Humidity = "); Serial.println(hum_c);
   Serial.print("Pressure = "); Serial.println(pres_c);
@@ -157,11 +157,11 @@ void loop() {
   if(IO_count!=0){
     tdiff=difftime(t,t0);
     if(tdiff > 900){
-      IO_cal=0; 
+      IO_cal=0;
       IO_count=0;
     }
   }
-  
+
   if(IO_cal==0){
     digitalWrite(pin_ACDL, LOW);
     digitalWrite(pin_MCDL, LOW);
@@ -170,12 +170,12 @@ void loop() {
     digitalWrite(pin_ACDL, HIGH);
     digitalWrite(pin_MCDL, LOW);
   }
-  
+
 
   WiFiClient client = server.available();   // listen for incoming clients
 
   if (client) {                             // if you get a client,
-    Serial.println("New Client.");           // print a message out the serial port
+    Serial.println("New Client.");          // print a message out the serial port
     String currentLine = "";                // make a String to hold incoming data from the client
     while (client.connected()) {            // loop while the client's connected
       if (client.available()) {             // if there's bytes to read from the client,
@@ -212,7 +212,7 @@ void loop() {
             client.print("IP address = "); client.println(WiFi.localIP());
             client.print("<br>");
             client.print("========================================================<br><br><br>");
-            
+
             client.print("========================================================<br>");
             client.print("Sensor<br>");
             client.print("========================================================<br>");
@@ -250,7 +250,7 @@ void loop() {
             client.print("========================================================<br>");
             client.print("<a href=\"/\">Top page</a><br>");
             client.print("========================================================<br><br><br>");
-            
+
 
             // The HTTP response ends with another blank line:
             client.println();
@@ -268,13 +268,13 @@ void loop() {
           IO_cal=1;
           if(IO_count==0){
             t0=time(NULL);
-            IO_count=1;               
+            IO_count=1;
           }
-          
+
         }
         if (currentLine.endsWith("GET /N")) {
           IO_cal=0;
-          IO_count=0;              
+          IO_count=0;
         }
       }
     }
@@ -283,8 +283,8 @@ void loop() {
     Serial.println("Client Disconnected.");
   }
 
-  
-  
+
+
   delay(10000);
 }
 
@@ -314,7 +314,7 @@ int getCO2ppm() {
   sendCommand('R');
 
   Wire.requestFrom(0x31, 7);
-  
+
   for (int i = 0; Wire.available(); i++) {
     tmpBuf[i] = Wire.read();
     delay(1);
@@ -327,7 +327,7 @@ int getCO2ppm() {
       tmpBuf[6] == 0xff) {
         return 0;
   }
-      
+
   return (tmpBuf[1] << 8) | tmpBuf[2];
 }
 
